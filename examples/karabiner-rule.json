@@ -1,0 +1,24 @@
+{
+  "description": "Hyper + ' toggles Magic Trackpad orientation",
+  "manipulators": [
+    {
+      "from": {
+        "key_code": "quote",
+        "modifiers": {
+          "mandatory": [
+            "left_command",
+            "left_control",
+            "left_option",
+            "left_shift"
+          ]
+        }
+      },
+      "to": [
+        {
+          "shell_command": "/bin/zsh -lc '$HOME/.hammerspoon/trackpad-orientation/toggle.sh'"
+        }
+      ],
+      "type": "basic"
+    }
+  ]
+}
