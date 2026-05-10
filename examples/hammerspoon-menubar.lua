@@ -29,9 +29,7 @@ end
 local function runTrackpadScript(script, label)
   hs.task.new(TRACKPAD_ORIENTATION_DIR .. "/" .. script, function(exitCode, _, stdErr)
     updateTrackpadMenu()
-    if exitCode == 0 then
-      hs.alert.show(label, 1.2)
-    else
+    if exitCode ~= 0 then
       local msg = (stdErr and stdErr ~= "") and stdErr or ("exit " .. tostring(exitCode))
       hs.alert.show("Trackpad failed: " .. msg, 1.2)
     end
@@ -61,4 +59,3 @@ trackpadMenu:setMenu(function()
 end)
 
 updateTrackpadMenu()
-
