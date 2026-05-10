@@ -15,6 +15,24 @@
       },
       "to": [
         {
+          "set_notification_message": {
+            "id": "magic_trackpad_upside_down",
+            "text": ""
+          }
+        },
+        {
+          "set_notification_message": {
+            "id": "trackpad_orientation",
+            "text": ""
+          }
+        },
+        {
+          "set_notification_message": {
+            "id": "trackpad-orientation",
+            "text": ""
+          }
+        },
+        {
           "shell_command": "/bin/zsh -lc '$HOME/.hammerspoon/trackpad-orientation/toggle.sh'"
         }
       ],
