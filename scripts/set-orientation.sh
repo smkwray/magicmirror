@@ -1,17 +1,23 @@
 #!/bin/zsh
 # set-orientation.sh <product-id> <normal|upside-down>
 #
-# Sets the desired orientation for a specific trackpad model (by ProductID) in
-# orient.conf, then applies immediately. The watch daemon live-reloads the config
-# (~2s) and self-heals (60s), so the change is durable -- editing the config is
-# how we cooperate with the daemon instead of fighting it.
+# Saves the desired orientation for one ProductID, then applies it immediately.
+# A disconnected target may be configured for the watcher to apply later; an
+# actual MultitouchSupport rejection is reported and returned to the caller.
 set -euo pipefail
 
 DIR="$HOME/.hammerspoon/trackpad-orientation"
 CONF="$DIR/orient.conf"
 
 product="${1:-}"; orient="${2:-}"
-if [[ -z "$product" || ( "$orient" != "normal" && "$orient" != "upside-down" ) ]]; then
+case "$product" in
+  ''|*[!0-9]*) product="" ;;
+esac
+case "$orient" in
+  normal|upside-down) ;;
+  *) orient="" ;;
+esac
+if [[ -z "$product" || -z "$orient" ]]; then
   echo "usage: set-orientation.sh <product-id> <normal|upside-down>" >&2
   exit 64
 fi
@@ -25,5 +31,13 @@ else
   printf 'product %s %s\n' "$product" "$orient" >> "$CONF"
 fi
 
-# Apply now so the change is instant; the daemon will keep enforcing it.
-"$DIR/mt-orient" apply >/dev/null 2>&1 || true
+if "$DIR/mt-orient" apply; then
+  exit 0
+else
+  rc=$?
+  if (( rc == 2 )); then
+    echo "orientation saved; no configured trackpad is currently connected" >&2
+    exit 0
+  fi
+  exit "$rc"
+fi

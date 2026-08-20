@@ -20,19 +20,16 @@ clang -fobjc-arc -framework Foundation \
 cp "$ROOT_DIR/scripts/"*.sh "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/"*.sh "$INSTALL_DIR/mt-orient" "$INSTALL_DIR/mt-orientation"
 
-# Seed config only if absent, so we never clobber the user's mapping on reinstall.
+# Seed a policy-neutral config only if absent. The installer must not impose the
+# maintainer's ProductIDs or flip a stranger's hardware merely by being installed.
 if [[ ! -f "$INSTALL_DIR/orient.conf" ]]; then
   cat > "$INSTALL_DIR/orient.conf" <<'CONF'
-# Durable per-trackpad orientation, keyed by hardware ProductID
-# (stable across USB and Bluetooth -- it is the model id, not the connection).
-#   804 = 0x0324  newer Magic Trackpad   -> normal
-#   613 = 0x0265  Magic Trackpad 2       -> upside-down
-# Devices whose ProductID is not listed here are left untouched.
-product 804 normal
-product 613 upside-down
-
-# Which model the toggle.sh / Hyper+' shortcut flips:
-toggle-target 613
+# Durable orientation keyed by ProductID (a model id, not a unique unit id).
+# Run `mt-orient list`, then add only the policy you intend, for example:
+# product 804 normal
+# product 613 upside-down
+# toggle-target 613
+# Devices whose ProductID is not listed are left untouched.
 CONF
 fi
 

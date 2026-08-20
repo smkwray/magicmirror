@@ -20,7 +20,7 @@
 // Devices whose ProductID is not listed in the config are left UNTOUCHED.
 //
 // config: ~/.hammerspoon/trackpad-orientation/orient.conf
-//   product 804 normal
+//   product 804 normal          # normal | upside-down
 //   product 613 upside-down
 //
 // modes:
@@ -42,7 +42,14 @@ typedef int  (*BuiltInFn)(MTDeviceRef);
 typedef int  (*DevIDFn)(MTDeviceRef, uint64_t *);
 typedef int  (*SetOrientFn)(MTDeviceRef, int);
 
-enum { ORIENT_NORMAL = 0, ORIENT_UPSIDE_DOWN = 2, ORIENT_SKIP = -2 };
+// Values verified by local hardware receipts: 0 = normal, 2 = 180 degrees.
+// Quarter-turn values are deliberately not exposed: the private driver rejected
+// them on tested hardware, and no capability contract is available.
+enum {
+    ORIENT_NORMAL      = 0,
+    ORIENT_UPSIDE_DOWN = 2,
+    ORIENT_SKIP        = -2,  // device not listed in config: leave untouched
+};
 
 static ListFn      MTDeviceCreateList;
 static TransFn     MTDeviceGetTransportMethod;
@@ -56,7 +63,15 @@ static int ruleProduct[MAX_RULES];
 static int ruleOrient[MAX_RULES];
 static int ruleCount = 0;
 
-static void loadConfig(void) {
+// Return 1 only for supported tokens. Invalid input must never silently become
+// "normal", because that turns a typo into a real hardware change.
+static int orientFromString(const char *s, int *out) {
+    if (strcmp(s, "normal") == 0)      { *out = ORIENT_NORMAL; return 1; }
+    if (strcmp(s, "upside-down") == 0) { *out = ORIENT_UPSIDE_DOWN; return 1; }
+    return 0;
+}
+
+static void loadConfig(int warn) {
     ruleCount = 0;
     const char *home = getenv("HOME");
     if (!home) return;
@@ -71,8 +86,14 @@ static void loadConfig(void) {
         if (sscanf(line, "%31s %d %31s", key, &product, orientStr) != 3) continue;
         if (strcmp(key, "product") != 0) continue;
         if (ruleCount >= MAX_RULES) break;
+        int orient = 0;
+        if (!orientFromString(orientStr, &orient)) {
+            if (warn) fprintf(stderr, "mt-orient: ignoring unsupported orientation '%s' for product %d\n",
+                              orientStr, product);
+            continue;
+        }
         ruleProduct[ruleCount] = product;
-        ruleOrient[ruleCount]  = (strcmp(orientStr, "normal") == 0) ? ORIENT_NORMAL : ORIENT_UPSIDE_DOWN;
+        ruleOrient[ruleCount]  = orient;
         ruleCount++;
     }
     fclose(f);
@@ -125,11 +146,19 @@ static int loadFramework(void) {
     return 1;
 }
 
-static int applyOnce(int verbose) {
+typedef struct {
+    int attempted;
+    int failed;
+} ApplyResult;
+
+static ApplyResult applyOnce(int verbose) {
+    ApplyResult result = {0, 0};
     CFMutableArrayRef devs = MTDeviceCreateList();
-    if (!devs) { if (verbose) fprintf(stderr, "mt-orient: no devices\n"); return 0; }
+    if (!devs) {
+        if (verbose) fprintf(stderr, "mt-orient: no devices\n");
+        return result;
+    }
     CFIndex n = CFArrayGetCount(devs);
-    int changed = 0;
     for (CFIndex i = 0; i < n; i++) {
         MTDeviceRef d = (MTDeviceRef)CFArrayGetValueAtIndex(devs, i);
         if (MTDeviceIsBuiltIn(d)) continue;
@@ -140,33 +169,39 @@ static int applyOnce(int verbose) {
             if (verbose) printf("device %ld: product=%d -> SKIP (not configured)\n", (long)i, product);
             continue;
         }
+        int transport = -1; MTDeviceGetTransportMethod(d, &transport);
         int r = MTDeviceSetSurfaceOrientation(d, want);
-        changed++;
-        if (verbose) {
-            int transport = -1; MTDeviceGetTransportMethod(d, &transport);
-            printf("device %ld: product=%d transport=%d -> setOrientation=%d result=%d\n",
-                   (long)i, product, transport, want, r);
+        result.attempted++;
+        if (verbose || r != 0) {
+            FILE *out = (r == 0) ? stdout : stderr;
+            fprintf(out, "device %ld: product=%d transport=%d -> setOrientation=%d result=%d\n",
+                    (long)i, product, transport, want, r);
         }
+        if (r != 0) result.failed++;
     }
     CFRelease(devs);
-    return changed;
+    return result;
 }
 
 // Force every external (non-builtin) multitouch device to normal. Used by uninstall.
-static int resetAll(int verbose) {
+static ApplyResult resetAll(int verbose) {
+    ApplyResult result = {0, 0};
     CFMutableArrayRef devs = MTDeviceCreateList();
-    if (!devs) return 0;
+    if (!devs) return result;
     CFIndex n = CFArrayGetCount(devs);
-    int changed = 0;
     for (CFIndex i = 0; i < n; i++) {
         MTDeviceRef d = (MTDeviceRef)CFArrayGetValueAtIndex(devs, i);
         if (MTDeviceIsBuiltIn(d)) continue;
         int r = MTDeviceSetSurfaceOrientation(d, ORIENT_NORMAL);
-        changed++;
-        if (verbose) printf("device %ld: -> setOrientation=0 result=%d\n", (long)i, r);
+        result.attempted++;
+        if (verbose || r != 0) {
+            FILE *out = (r == 0) ? stdout : stderr;
+            fprintf(out, "device %ld: -> setOrientation=0 result=%d\n", (long)i, r);
+        }
+        if (r != 0) result.failed++;
     }
     CFRelease(devs);
-    return changed;
+    return result;
 }
 
 static void listDevices(void) {
@@ -210,17 +245,25 @@ static int deviceSignature(char *sig, size_t siglen) {
 int main(int argc, const char *argv[]) {
     const char *mode = (argc >= 2) ? argv[1] : "apply";
     if (!loadFramework()) return 1;
-    loadConfig();
+    loadConfig(1);
 
-    if (strcmp(mode, "list") == 0)  { listDevices(); return 0; }
-    if (strcmp(mode, "apply") == 0) { return applyOnce(1) > 0 ? 0 : 2; }
-    if (strcmp(mode, "reset") == 0) { resetAll(1); return 0; }
+    if (strcmp(mode, "list") == 0) { listDevices(); return 0; }
+    if (strcmp(mode, "apply") == 0) {
+        ApplyResult r = applyOnce(1);
+        if (r.failed > 0) return 3;
+        return r.attempted > 0 ? 0 : 2;
+    }
+    if (strcmp(mode, "reset") == 0) {
+        ApplyResult r = resetAll(1);
+        if (r.failed > 0) return 3;
+        return r.attempted > 0 ? 0 : 2;
+    }
 
     if (strcmp(mode, "watch") == 0) {
         char lastSig[800] = ""; char sig[800];
         time_t lastApply = 0;
         for (;;) {
-            loadConfig(); // live-reload edits
+            loadConfig(0); // live-reload edits
             int count = deviceSignature(sig, sizeof(sig));
             time_t now = time(NULL);
             int setChanged = strcmp(sig, lastSig) != 0;
@@ -234,6 +277,6 @@ int main(int argc, const char *argv[]) {
         }
     }
 
-    fprintf(stderr, "usage: %s list|apply|watch\n", argv[0]);
+    fprintf(stderr, "usage: %s list|apply|watch|reset\n", argv[0]);
     return 64;
 }

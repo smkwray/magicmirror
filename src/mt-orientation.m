@@ -65,7 +65,8 @@ int main(int argc, const char *argv[]) {
     }
 
     CFIndex count = CFArrayGetCount(devices);
-    int changed = 0;
+    int attempted = 0;
+    int failed = 0;
 
     for (CFIndex i = 0; i < count; i++) {
         MTDeviceRef device = (MTDeviceRef)CFArrayGetValueAtIndex(devices, i);
@@ -73,23 +74,27 @@ int main(int argc, const char *argv[]) {
         MTDeviceGetTransportMethod(device, &transport);
         int builtIn = MTDeviceIsBuiltIn(device);
 
-        printf("device %ld: transport=%d builtIn=%d", (long)i, transport, builtIn);
-
         if (!listOnly && transport == TransportBluetooth && !builtIn) {
             int result = MTDeviceSetSurfaceOrientation(device, desiredOrientation);
-            printf(" setOrientation=%d result=%d", desiredOrientation, result);
-            changed++;
+            attempted++;
+            if (result != 0) failed++;
+            // A rejected orientation must never read as success: the whole line
+            // goes to stderr, so stdout carries only calls that actually took.
+            FILE *out = (result == 0) ? stdout : stderr;
+            fprintf(out, "device %ld: transport=%d builtIn=%d setOrientation=%d result=%d\n",
+                    (long)i, transport, builtIn, desiredOrientation, result);
+        } else {
+            printf("device %ld: transport=%d builtIn=%d\n", (long)i, transport, builtIn);
         }
-
-        printf("\n");
     }
 
     CFRelease(devices);
 
-    if (!listOnly && changed == 0) {
+    if (listOnly) return 0;
+    if (failed > 0) return 3;          // MultitouchSupport rejected at least one call
+    if (attempted == 0) {
         fprintf(stderr, "no external Bluetooth multitouch device found\n");
-        return 2;
+        return 2;                      // nothing to do -- not a failure
     }
-
     return 0;
 }

@@ -2,16 +2,26 @@
 -- Paste this into ~/.hammerspoon/init.lua after requiring hs.ipc.
 
 local TRACKPAD_ORIENTATION_DIR = os.getenv("HOME") .. "/.hammerspoon/trackpad-orientation"
-local TRACKPAD_STATE_FILE = TRACKPAD_ORIENTATION_DIR .. "/state"
+local TRACKPAD_CONF = TRACKPAD_ORIENTATION_DIR .. "/orient.conf"
 local trackpadMenu = hs.menubar.new()
 
+-- Read the toggle-target trackpad's orientation straight from orient.conf, the
+-- single source of truth that both the scripts and the mt-orient daemon key off.
+-- (A separate "state" file used to hold this; nothing kept it current, so the
+-- menu bar silently showed whatever it last said -- for months.)
 local function readTrackpadState()
-  local f = io.open(TRACKPAD_STATE_FILE, "r")
-  if not f then return "normal" end
-  local state = f:read("*l") or "normal"
+  local f = io.open(TRACKPAD_CONF, "r")
+  if not f then return "unconfigured" end
+  local target, orientation = nil, {}
+  for line in f:lines() do
+    local t = line:match("^toggle%-target%s+(%S+)")
+    if t then target = t end
+    local p, o = line:match("^product%s+(%S+)%s+(%S+)")
+    if p then orientation[p] = o end
+  end
   f:close()
-  if state == "upside-down" then return state end
-  return "normal"
+  if not target then return "unconfigured" end
+  return orientation[target] or "unconfigured"
 end
 
 local function updateTrackpadMenu()
@@ -20,11 +30,20 @@ local function updateTrackpadMenu()
   if state == "upside-down" then
     trackpadMenu:setTitle("TP UD")
     trackpadMenu:setTooltip("Magic Trackpad: upside down")
-  else
+  elseif state == "normal" then
     trackpadMenu:setTitle("TP OK")
     trackpadMenu:setTooltip("Magic Trackpad: normal")
+  else
+    trackpadMenu:setTitle("TP --")
+    trackpadMenu:setTooltip("Magic Trackpad: no toggle target configured")
   end
 end
+
+-- set-orientation.sh replaces orient.conf atomically, so watch the directory and
+-- refresh the title when a shell command or editor changes it.
+local trackpadWatcher = hs.pathwatcher.new(TRACKPAD_ORIENTATION_DIR, function()
+  updateTrackpadMenu()
+end):start()
 
 local function runTrackpadScript(script, label)
   hs.task.new(TRACKPAD_ORIENTATION_DIR .. "/" .. script, function(exitCode, _, stdErr)
@@ -53,7 +72,7 @@ trackpadMenu:setMenu(function()
       runTrackpadScript("apply-current.sh", "Magic Trackpad: reapplied")
     end },
     { title = "Open Log", fn = function()
-      hs.execute("open -a Console /tmp/trackpad-orientation.log >/dev/null 2>&1")
+      hs.execute("open -a Console /tmp/magicmirror.out.log /tmp/magicmirror.err.log >/dev/null 2>&1")
     end },
   }
 end)
