@@ -1,28 +1,12 @@
 # MagicMirror
 
-MagicMirror flips an Apple Magic Trackpad for upside-down use on macOS.
+MagicMirror flips an external Apple Magic Trackpad for upside-down use on macOS. Instead of intercepting pointer events, which tends to cause jitter, ghost cursors and stuck clicks, it calls Apple's private MultitouchSupport framework to set the trackpad's surface orientation directly. A login LaunchAgent re-applies your settings when a trackpad reconnects, after wake and after a restart.
 
-It does not warp the cursor, intercept pointer events, or require
-BetterTouchTool. Instead, it calls Apple's private MultitouchSupport framework
-to set the trackpad surface orientation directly.
-
-With trackpads that have **different ProductIDs**, it can keep one normal and
-another flipped durably. `mt-orient` assigns orientation by ProductID — a model
-identifier that is stable across USB and Bluetooth, but is not unique to one
-physical unit — and re-applies it across reconnects, wake, and login. Two units
-that report the same ProductID necessarily share one policy.
-
-## Why
-
-Apple's Magic Trackpad is physically comfortable upside down in some desk setups,
-but macOS does not expose a modern setting for mirroring pointer and scroll
-directions. Event-tap approaches can make the direction correct, but they often
-cause ghost cursors, jitter, stuck clicks, or jumpy motion.
-
-MagicMirror uses the same class of driver-level orientation path that dedicated
-tools use, but packages it as a tiny local helper.
+Orientation is set per trackpad model, by its hardware ProductID, which stays the same over USB and Bluetooth. Two trackpads with different ProductIDs can have different orientations; two of the same model share one setting. Because MagicMirror uses a private Apple API, a future macOS update could break it.
 
 ## Install
+
+Installing needs the Xcode command-line tools (`xcode-select --install`).
 
 ```sh
 git clone https://github.com/smkwray/magicmirror.git
@@ -30,104 +14,59 @@ cd magicmirror
 ./install.sh
 ```
 
-The installer compiles `src/mt-orient.m`, installs runtime scripts under:
+The installer compiles the `mt-orient` helper, copies it and the scripts to `~/.hammerspoon/trackpad-orientation/`, and loads the LaunchAgent `~/Library/LaunchAgents/com.smkwray.magicmirror.plist`. A first install changes no trackpad until you configure one, and reinstalling keeps your configuration. Hammerspoon is not required; the folder name only matters for the optional integration below.
 
-```text
-~/.hammerspoon/trackpad-orientation/
-```
+## Configure
 
-and installs a login LaunchAgent:
-
-```text
-~/Library/LaunchAgents/com.smkwray.magicmirror.plist
-```
-
-The installer creates and starts a user `KeepAlive` LaunchAgent immediately.
-A first install is policy-neutral: edit `orient.conf` before any trackpad will be
-changed. Reinstalling preserves an existing mapping.
-
-## Usage
-
-Apply upside-down orientation for the configured `toggle-target`:
-
-```sh
-~/.hammerspoon/trackpad-orientation/apply-upside-down.sh
-```
-
-Apply normal orientation:
-
-```sh
-~/.hammerspoon/trackpad-orientation/apply-normal.sh
-```
-
-Toggle saved state:
-
-```sh
-~/.hammerspoon/trackpad-orientation/toggle.sh
-```
-
-List detected multitouch devices:
+List the connected trackpads to find their ProductIDs:
 
 ```sh
 ~/.hammerspoon/trackpad-orientation/mt-orient list
 ```
 
-Example output:
-
 ```text
 device 0: transport=1 builtIn=0 product=804 desired=0
 ```
 
-`transport` is an undocumented diagnostic value and is not used as identity.
-MagicMirror exposes only the verified orientations: `0` normal and `2`
-upside-down. Quarter-turn values are not supported by this tool.
-
-## Multiple trackpads (durable, per-ProductID)
-
-The original `mt-orientation` helper flips **all** external Bluetooth trackpads
-to the same orientation. That cannot express "trackpad A normal, trackpad B
-flipped", and it breaks when a device moves between USB and Bluetooth (the
-device index and transport both change).
-
-`mt-orient` keys orientation to **ProductID**.
-It correlates every live multitouch device to its IOKit `AppleMultitouchDevice`
-record (matching `MTDeviceGetDeviceID` to the IOKit `Multitouch ID`) and reads
-`ProductID` — a fixed hardware model id that does **not** change with the cable.
-It is not a unique unit identifier: two same-model trackpads that report the same
-ProductID cannot receive different policies. Transport, device index, GUID, and
-the reported serial are connection-dependent and therefore unsuitable as keys.
-
-Configure the mapping in `~/.hammerspoon/trackpad-orientation/orient.conf`:
+Then set an orientation for each model in `~/.hammerspoon/trackpad-orientation/orient.conf`. ProductIDs you do not list are left alone.
 
 ```text
-# <productID> <normal|upside-down>; unlisted ProductIDs are left untouched
+# product <ProductID> <normal|upside-down>
 product 804 normal
 product 613 upside-down
 
-# Optional default for toggle.sh / apply-*.sh when no argument is supplied:
+# Trackpad that toggle.sh and apply-*.sh change when given no ProductID
 toggle-target 613
 ```
 
-Find your ProductIDs with `mt-orient list`. Commands:
+The LaunchAgent applies changes to this file within a minute; `mt-orient apply` applies them at once.
+
+## Usage
+
+`toggle.sh`, `apply-upside-down.sh` and `apply-normal.sh` save the change to `orient.conf` and apply it at once. Each takes an optional ProductID and otherwise uses `toggle-target`.
 
 ```sh
-mt-orient list     # show devices, ProductIDs, and resolved orientation
-mt-orient apply    # apply the config once
-mt-orient watch    # daemon: re-apply on reconnect/wake, self-heal every 60s
-mt-orient reset    # force all external trackpads back to normal
+cd ~/.hammerspoon/trackpad-orientation
+./toggle.sh                # switch between normal and upside-down
+./apply-upside-down.sh
+./apply-normal.sh
+./apply-current.sh         # re-apply orient.conf once
 ```
 
-The installer runs `mt-orient watch` from the login LaunchAgent with
-`KeepAlive`, so the per-ProductID orientation survives reconnect, sleep/wake, and
-reboot. The `toggle.sh` / `apply-*.sh` scripts edit `orient.conf` and re-apply,
-so the manual shortcut and the daemon cooperate instead of fighting.
+`mt-orient` in the same folder has four commands:
 
-## Optional Integrations
+```sh
+./mt-orient list     # show trackpads, ProductIDs and configured orientation
+./mt-orient apply    # apply orient.conf once
+./mt-orient watch    # keep applying it (what the LaunchAgent runs)
+./mt-orient reset    # set every external trackpad back to normal
+```
 
-Hammerspoon:
+Only `0` (normal) and `2` (upside-down) orientations are supported. The LaunchAgent logs to `/tmp/magicmirror.out.log` and `/tmp/magicmirror.err.log`.
 
-- Copy `examples/hammerspoon-menubar.lua` into `~/.hammerspoon/init.lua`.
-- It adds a small `TP UD` / `TP OK` menu bar item.
+## Optional Hammerspoon menu
+
+Copy `examples/hammerspoon-menubar.lua` into `~/.hammerspoon/init.lua` to get a menu bar item that shows `TP UD` or `TP OK` and offers Upside-down, Normal, Toggle and Reapply Current.
 
 ## Uninstall
 
@@ -135,34 +74,11 @@ Hammerspoon:
 ./uninstall.sh
 ```
 
-This resets the trackpad to normal, unloads the LaunchAgent, and removes the
-installed runtime folder.
+This stops the LaunchAgent, resets connected external trackpads to normal, and removes the installed folder and LaunchAgent.
 
-## How It Works
+## How it works
 
-`src/mt-orient.m` dynamically loads:
-
-```text
-/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport
-```
-
-and calls:
-
-```text
-MTDeviceCreateList
-MTDeviceGetTransportMethod
-MTDeviceIsBuiltIn
-MTDeviceGetDeviceID
-MTDeviceSetSurfaceOrientation
-```
-
-The manager skips built-in devices and resolves external devices through IOKit.
-It does not gate behavior on a particular private transport number.
-
-## Caveat
-
-This uses private Apple API. It is free and local, but Apple could rename or
-remove these symbols in a future macOS release.
+`mt-orient` loads `/System/Library/PrivateFrameworks/MultitouchSupport.framework` at run time and calls `MTDeviceCreateList`, `MTDeviceGetTransportMethod`, `MTDeviceIsBuiltIn`, `MTDeviceGetDeviceID` and `MTDeviceSetSurfaceOrientation`. It skips built-in trackpads and reads each external trackpad's ProductID from its IOKit `AppleMultitouchDevice` record. In watch mode it checks the connected devices every two seconds, applies the configuration when they change, and re-applies it every 60 seconds.
 
 ## Sources
 
@@ -172,4 +88,4 @@ remove these symbols in a future macOS release.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
